@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Optional PEFT import for LoRA support
 try:
-    from peft import get_peft_model, LoraConfig, TaskType
+    from peft import get_peft_model, LoraConfig, TaskType # type: ignore
     PEFT_AVAILABLE = True
 except ImportError:  # pragma: no cover - optional dependency
     logger.warning("PEFT not installed; LoRA features will be disabled. Install with `pip install peft`.")
