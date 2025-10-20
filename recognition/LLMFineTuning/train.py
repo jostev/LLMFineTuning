@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 from modules import *
 from dataset import get_dataloaders
+from tqdm.auto import tqdm
 
 def move_to_device(batch, device):
     """Move batch of data to target device."""
@@ -91,6 +92,8 @@ def main():
         lora_config=lora_config
     )
 
+    model.config.use_cache = False  # Disable cache for training
+
     # Build dataloaders
     train_loader, val_loader, _ = get_dataloaders(
         tokenizer,
@@ -129,16 +132,19 @@ def main():
     best_dir.mkdir(parents=True, exist_ok=True)
 
     # Training loop
+    print("Starting training...")
+    print(torch.cuda.get_mem_info())
     for epoch in range(1, args.epochs + 1):
         model.train()
         optimizer.zero_grad(set_to_none=True)
         running = 0.0
 
-        for step, batch in enumerate(train_loader, 1):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{args.epochs}")
+        for step, batch in enumerate(pbar, start=1):
             batch = move_to_device(batch, device)
 
             # Forward pass with mixed precision    
-            with torch.amp.autocast(device_type="cuda",enabled=args.fp16):
+            with torch.amp.autocast(device_type="cuda", enabled=args.fp16):
                 outputs = model(**batch)
                 loss = outputs.loss / args.grad_accum
 
@@ -155,7 +161,15 @@ def main():
                 optimizer.zero_grad(set_to_none=True)
                 scheduler.step()
             
+            # Update progress bar
+            pbar.set_postfix({"loss": f"{running / max(1, step):.4f}"})
+
+        print(torch.cuda.get_mem_info())
+
+        # End of epoch evaluation            
         val_loss = evaluate(model, val_loader, device, fp16=args.fp16)
+
+        # Epoch logging
         print(f"Epoch {epoch}/{args.epochs}")
         print(f"Train Loss: {running/len(train_loader):.4f}")
         print(f"Val Loss: {val_loss:.4f}")
