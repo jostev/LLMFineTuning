@@ -16,11 +16,21 @@ from transformers import (
     get_cosine_schedule_with_warmup
 )
 from typing import Dict, Optional, Tuple
-from peft import get_peft_model, LoraConfig, TaskType
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Optional PEFT import for LoRA support
+try:
+    from peft import get_peft_model, LoraConfig, TaskType
+    PEFT_AVAILABLE = True
+except ImportError:  # pragma: no cover - optional dependency
+    logger.warning("PEFT not installed; LoRA features will be disabled. Install with `pip install peft`.")
+    get_peft_model = None  # type: ignore
+    LoraConfig = None  # type: ignore
+    TaskType = None  # type: ignore
+    PEFT_AVAILABLE = False
 
 
 # Model registry with supported models
@@ -159,7 +169,57 @@ def prepare_model_for_training(
     Returns:
         Prepared model
     """
+    # Handle LoRA adaptation if requested and available
+    if lora_config:
+        if not PEFT_AVAILABLE:
+            logger.warning("LoRA requested but PEFT is not installed; skipping LoRA configuration.")
+        else:
+            # Determine task type based on model attributes
+            task_type = TaskType.SEQ_2_SEQ_LM if hasattr(model, "encoder") else TaskType.CAUSAL_LM
 
+            peft_config = LoraConfig(
+                task_type=task_type,
+                inference_mode=False,
+                r=lora_config.get("r", 8),
+                lora_alpha=lora_config.get("lora_alpha", 32),
+                lora_dropout=lora_config.get("lora_dropout", 0.1),
+                target_modules=lora_config.get("target_modules", ["q", "v"])
+            )
+
+            model = get_peft_model(model, peft_config)
+            logger.info("LoRA adaptation enabled")
+            with torch.no_grad():
+                model.print_trainable_parameters()
+            return model
+
+    # Freeze encoder layers when requested (for encoder-decoder models)
+    if freeze_encoder and hasattr(model, "encoder"):
+        for param in model.encoder.parameters():
+            param.requires_grad = False
+        logger.info("Encoder layers frozen")
+
+    # Freeze embedding layers when requested
+    if freeze_embeddings:
+        if hasattr(model, "shared"):  # T5/FLAN-T5 share embeddings
+            for param in model.shared.parameters():
+                param.requires_grad = False
+        if hasattr(model, "transformer") and hasattr(model.transformer, "wte"):
+            for param in model.transformer.wte.parameters():
+                param.requires_grad = False
+            for param in model.transformer.wpe.parameters():
+                param.requires_grad = False
+        logger.info("Embedding layers frozen")
+
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    logger.info(
+        "Trainable parameters: %s / %s (%.2f%%)",
+        f"{trainable_params:,}",
+        f"{total_params:,}",
+        100 * trainable_params / total_params if total_params else 0.0,
+    )
+
+    return model
 
 def create_optimizer(
     model: torch.nn.Module,
@@ -227,7 +287,7 @@ def create_optimizer(
 def create_scheduler(
     optimizer: torch.optim.Optimizer,
     num_training_steps: int,
-    num_warmup_steps: int,
+    num_warmup_steps: int = None,
     warmup_ratio: float = 0.1,
     scheduler_type: str = "linear"
 ) -> torch.optim.lr_scheduler._LRScheduler:
@@ -244,7 +304,8 @@ def create_scheduler(
     Returns:
         Learning rate scheduler
     """
-    num_warmup_steps = int(num_training_steps * warmup_ratio)
+    if num_warmup_steps is None:
+        num_warmup_steps = int(num_training_steps * warmup_ratio)
     
     if scheduler_type.lower() == "linear":
         scheduler = get_linear_schedule_with_warmup(
