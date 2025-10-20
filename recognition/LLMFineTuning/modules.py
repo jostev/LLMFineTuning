@@ -110,8 +110,52 @@ def load_model_and_tokenizer(model_name, device, use_8bit=False, gradient_checkp
     
     return model, tokenizer, model_type
 
-def prepare_model_for_training():
-    pass
+def prepare_model_for_training(model, freeze_encoder, freeze_embeddings, lora_config):
+    if lora_config:
+        # Determine task type
+        if hasattr(model, "encoder"):
+            task_type = TaskType.SEQ_2_SEQ_LM
+        else:
+            task_type = TaskType.CAUSAL_LM
+        
+        peft_config = LoraConfig(
+            task_type=task_type,
+            inference_mode=False,
+            r=lora_config.get("r", 8),
+            lora_alpha=lora_config.get("lora_alpha", 32),
+            lora_dropout=lora_config.get("lora_dropout", 0.1),
+            target_modules=lora_config.get("target_modules", ["q", "v"])
+        )
+        
+        model = get_peft_model(model, peft_config)
+        logger.info("LoRA enabled")
+        model.print_trainable_parameters()
+        return model
+    
+    # Freeze encoder if requested (for encoder-decoder models)
+    if freeze_encoder and hasattr(model, "encoder"):
+        for param in model.encoder.parameters():
+            param.requires_grad = False
+        logger.info("Encoder frozen")
+    
+    # Freeze embeddings if requested
+    if freeze_embeddings:
+        if hasattr(model, "shared"):  # T5 models
+            for param in model.shared.parameters():
+                param.requires_grad = False
+        if hasattr(model, "transformer") and hasattr(model.transformer, "wte"):  # GPT-2
+            for param in model.transformer.wte.parameters():
+                param.requires_grad = False
+            for param in model.transformer.wpe.parameters():
+                param.requires_grad = False
+        logger.info("Embeddings frozen")
+    
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    logger.info(f"Trainable parameters: {trainable_params:,} / {total_params:,} "
+                f"({100 * trainable_params / total_params:.2f}%)")
+    
+    return model
 
 
 def create_optimizer():
