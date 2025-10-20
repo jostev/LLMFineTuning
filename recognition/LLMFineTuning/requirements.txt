@@ -1,6 +1,14 @@
 torch
-numpy
-pandas
 transformers
 datasets
+evaluate
+rouge-score
+accelerate
 peft
+bitsandbytes
+huggingface_hub
+tokenizers
+safetensors
+sentencepiece
+tqdm
+numpy
