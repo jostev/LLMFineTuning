@@ -13,3 +13,7 @@ For specific details of use and creation:
 - Total training time: 
 
 TODO: include 3-5 representative input–output examples with a short error analysis paragraph.
+
+To run:
+1. Create a virtual environment
+2. Install packages in `requirements.txt`
