@@ -227,11 +227,78 @@ def create_scheduler(optimizer, num_training_steps, num_warmup_steps, warumup_ra
 
 class ModelConfig:
     """Configuration class for model training."""
-    
-    def __init__():
+    def __init__(
+        self,
+        model_name="t5-small",
+        learning_rate=5e-5,
+        batch_size=8,
+        num_epochs=3,
+        max_source_length=512,
+        max_target_length=256,
+        weight_decay=0.01,
+        warmup_ratio=0.1,
+        gradient_accumulation_steps=1,
+        max_grad_norm=1.0,
+        seed=42,
+        save_steps=500,
+        eval_steps=500,
+        logging_steps=100,
+        save_total_limit=3,
+        output_dir="./output",
+        use_8bit=False,
+        gradient_checkpointing=False,
+        freeze_encoder=False,
+        freeze_embeddings=False,
+        lora_config=None,
+        optimizer_type="adamw",
+        scheduler_type="linear",
+        fp16=False,
+        num_beams=4,
+        early_stopping=True,
+        device=None
+    ):
         """
         Initialize model configuration.
         """
+        self.model_name = model_name
+        self.learning_rate = learning_rate
+        self.batch_size = batch_size
+        self.num_epochs = num_epochs
+        self.max_source_length = max_source_length
+        self.max_target_length = max_target_length
+        self.weight_decay = weight_decay
+        self.warmup_ratio = warmup_ratio
+        self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.max_grad_norm = max_grad_norm
+        self.seed = seed
+        self.save_steps = save_steps
+        self.eval_steps = eval_steps
+        self.logging_steps = logging_steps
+        self.save_total_limit = save_total_limit
+        self.output_dir = output_dir
+        self.use_8bit = use_8bit
+        self.gradient_checkpointing = gradient_checkpointing
+        self.freeze_encoder = freeze_encoder
+        self.freeze_embeddings = freeze_embeddings
+        self.lora_config = lora_config
+        self.optimizer_type = optimizer_type
+        self.scheduler_type = scheduler_type
+        self.fp16 = fp16 and torch.cuda.is_available()
+        self.num_beams = num_beams
+        self.early_stopping = early_stopping
+        self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model_type = get_model_type(model_name)
+
+    def __repr__(self):
+        config_str = "ModelConfig(\n"
+        for key, value in self.__dict__.items():
+            config_str += f"  {key}={value},\n"
+        config_str += ")"
+        return config_str
+
+    def to_dict(self):
+        return self.__dict__.copy()
+
 
 def set_seed(seed: int):
     """
@@ -245,3 +312,5 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    
+    logger.ingo(f"Random seed set to: {seed}")
