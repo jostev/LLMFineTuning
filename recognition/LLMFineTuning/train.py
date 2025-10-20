@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
+from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 import json
 import evaluate
@@ -19,7 +20,7 @@ def decode_labels(labels, pad_id):
     labels[labels == -100] = pad_id
     return labels
 
-def compute_rouge(model, tokenizer, dataloader, device, num_beams=4, max_new_tokens=128):
+def compute_rouge(model, tokenizer, dataloader, device, fp16, num_beams=4, max_new_tokens=128):
     """Compute ROUGE scores on the dataset using the model."""
     model.eval()  # Set model to evaluation mode
     preds = []
@@ -30,12 +31,13 @@ def compute_rouge(model, tokenizer, dataloader, device, num_beams=4, max_new_tok
             batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
 
             # Generate predictions from model
-            gen = model.generate(
-                input_ids=batch["input_ids"],
-                attention_mask=batch["attention_mask"],
-                num_beams=num_beams,
-                max_new_tokens=max_new_tokens
-            )
+            with autocast(enabled=torch.cuda.is_available() and fp16):
+                gen = model.generate(
+                    input_ids=batch["input_ids"],
+                    attention_mask=batch["attention_mask"],
+                    num_beams=num_beams,
+                    max_new_tokens=max_new_tokens
+                )
 
             # Decode generated token ids to text
             pred_text = tokenizer.batch_decode(gen, skip_special_tokens=True)
@@ -55,7 +57,7 @@ def move_to_device(batch, device):
     """Move batch of data to target device."""
     out = {}
     for k, v in batch.items():
-        out[k] = v.to(device, non_blocking=True)
+        out[k] = v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
     return out
 
 def evaluate(model, dataloader, device):
@@ -168,7 +170,7 @@ def main():
     )
     
     # Mixed precision scaler
-    scaler = torch.amp.GradScaler(enabled=args.fp16)
+    scaler = GradScaler(enabled=args.fp16)
 
     # Prepare output
     out_dir = Path(args.output_dir)
@@ -176,6 +178,10 @@ def main():
     best_val = float("inf")
     best_dir = out_dir / "best"
     best_dir.mkdir(parents=True, exist_ok=True)
+
+    # Prepare variables
+    best_val = float("inf")
+    best_rougel = -1.0
 
     # Training loop
     print("Starting training...")
@@ -190,7 +196,7 @@ def main():
             batch = move_to_device(batch, device)
 
             # Forward pass with mixed precision    
-            with torch.amp.autocast(device_type="cuda", enabled=args.fp16):
+            with autocast(device_type="cuda", enabled=args.fp16):
                 outputs = model(**batch)
                 loss = outputs.loss / args.grad_accum
 
@@ -213,9 +219,9 @@ def main():
         print(torch.cuda.mem_get_info())
 
         # End of epoch evaluation: compute loss and ROUGE          
-        val_loss = evaluate(model, val_loader, device, fp16=args.fp16)
+        val_loss = evaluate(model, val_loader, device)
         metrics = compute_rouge(
-            model, tokenizer, val_loader, device,
+            model, tokenizer, val_loader, device, args.fp16,
             num_beams=args.eval_num_beams,
             max_new_tokens=args.eval_max_new_tokens
         )
@@ -245,7 +251,9 @@ def main():
         
         # Track best model
         key = "val_loss" if args.select_by == "loss" else "rougeL"
-        better = (val_loss < best_val) if args.select_by == "loss" else (metrics.get("rougeL", 0.0) > locals().get("best_rougel", 0.0))
+        better = ((val_loss < best_val) 
+                  if args.select_by == "loss" 
+                  else (metrics.get("rougeL", 0.0) > locals().get("best_rougel", 0.0)))
         if better:
             if args.select_by == "loss":
                 best_val = val_loss
