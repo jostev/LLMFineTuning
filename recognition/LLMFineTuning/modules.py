@@ -22,6 +22,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 # Model registry with supported models
 ENCODER_DECODER_MODELS = {
     "t5-small": "t5-small",
@@ -42,7 +43,17 @@ DECODER_ONLY_MODELS = {
 
 ALL_MODELS = {**ENCODER_DECODER_MODELS, **DECODER_ONLY_MODELS}
 
+
 def get_model_type(model_name: str) -> str:
+    """
+    Determine if a model is encoder-decoder or decoder-only.
+    
+    Args:
+        model_name: Model name or identifier
+        
+    Returns:
+        "encoder-decoder" or "decoder-only"
+    """
     if model_name in ENCODER_DECODER_MODELS or model_name in ENCODER_DECODER_MODELS.values():
         return "encoder-decoder"
     elif model_name in DECODER_ONLY_MODELS or model_name in DECODER_ONLY_MODELS.values():
@@ -54,12 +65,30 @@ def get_model_type(model_name: str) -> str:
         elif any(name in model_name.lower() for name in ["gpt", "gpt2", "gpt-neo"]):
             return "decoder-only"
         else:
-            raise ValueError("Unknown model.")
+            raise ValueError(
+                f"Unknown model type for {model_name}. "
+                f"Supported models: {list(ALL_MODELS.keys())}"
+            )
 
-def load_model_and_tokenizer(model_name, device, use_8bit=False, gradient_checkpointing=False):
-    # Initialise device
-    device = device if torch.cuda.is_available() else "cpu"
 
+def load_model_and_tokenizer(
+    model_name: str,
+    device: str = "cuda" if torch.cuda.is_available() else "cpu",
+    use_8bit: bool = false,
+    gradient_checkpointing: bool = false
+) -> Tuple[torch.nn.Module, AutoTokenizer, str]:
+    """
+    Load a pre-trained model and tokenizer.
+    
+    Args:
+        model_name: Model name or path (e.g., "t5-small", "gpt2", "flan-t5-base")
+        device: Device to load model on ("cuda" or "cpu")
+        use_8bit: Whether to use 8-bit quantization (requires bitsandbytes)
+        gradient_checkpointing: Enable gradient checkpointing to save memory
+        
+    Returns:
+        Tuple of (model, tokenizer, model_type)
+    """
     logger.info(f"Loading model: {model_name}")
     logger.info(f"Device: {device}")
     
@@ -80,7 +109,7 @@ def load_model_and_tokenizer(model_name, device, use_8bit=False, gradient_checkp
             model_kwargs["device_map"] = "auto"
             logger.info("Using 8-bit quantization")
         except Exception as e:
-            logger.warning(f"Error loading 8-bit quantization: {e}")
+            logger.warning(f"8-bit quantization not available: {e}")
             use_8bit = False
     
     # Load model based on type
@@ -110,55 +139,48 @@ def load_model_and_tokenizer(model_name, device, use_8bit=False, gradient_checkp
     
     return model, tokenizer, model_type
 
-def prepare_model_for_training(model, freeze_encoder, freeze_embeddings, lora_config):
-    if lora_config:
-        # Determine task type
-        if hasattr(model, "encoder"):
-            task_type = TaskType.SEQ_2_SEQ_LM
-        else:
-            task_type = TaskType.CAUSAL_LM
+
+def prepare_model_for_training(
+    model: torch.nn.Module,
+    freeze_encoder: bool = False,
+    freeze_embeddings: bool = False,
+    lora_config: Optional[Dict] = None
+) -> torch.nn.Module:
+    """
+    Prepare model for fine-tuning with optional parameter freezing or LoRA.
+    
+    Args:
+        model: Pre-trained model
+        freeze_encoder: Freeze encoder layers (for encoder-decoder models)
+        freeze_embeddings: Freeze embedding layers
+        lora_config: Configuration for LoRA (Low-Rank Adaptation)
+                    Example: {"r": 8, "lora_alpha": 32, "lora_dropout": 0.1}
         
-        peft_config = LoraConfig(
-            task_type=task_type,
-            inference_mode=False,
-            r=lora_config.get("r", 8),
-            lora_alpha=lora_config.get("lora_alpha", 32),
-            lora_dropout=lora_config.get("lora_dropout", 0.1),
-            target_modules=lora_config.get("target_modules", ["q", "v"])
-        )
-        
-        model = get_peft_model(model, peft_config)
-        logger.info("LoRA enabled")
-        model.print_trainable_parameters()
-        return model
-    
-    # Freeze encoder if requested (for encoder-decoder models)
-    if freeze_encoder and hasattr(model, "encoder"):
-        for param in model.encoder.parameters():
-            param.requires_grad = False
-        logger.info("Encoder frozen")
-    
-    # Freeze embeddings if requested
-    if freeze_embeddings:
-        if hasattr(model, "shared"):  # T5 models
-            for param in model.shared.parameters():
-                param.requires_grad = False
-        if hasattr(model, "transformer") and hasattr(model.transformer, "wte"):  # GPT-2
-            for param in model.transformer.wte.parameters():
-                param.requires_grad = False
-            for param in model.transformer.wpe.parameters():
-                param.requires_grad = False
-        logger.info("Embeddings frozen")
-    
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Trainable parameters: {trainable_params:,} / {total_params:,} "
-                f"({100 * trainable_params / total_params:.2f}%)")
-    
-    return model
+    Returns:
+        Prepared model
+    """
 
 
-def create_optimizer(model, learning_rate=5e-5, weight_decay=0.01, adam_epsilon=1e-8, optimizer_type="adamw"):
+def create_optimizer(
+    model: torch.nn.Module,
+    learning_rate: float = 5e-5,
+    weight_decay: float = 0.01,
+    adam_epsilon: float = 1e-8,
+    optimizer_type: str = "adamw"
+) -> torch.optim.Optimizer:
+    """
+    Create optimizer for training.
+    
+    Args:
+        model: Model to optimize
+        learning_rate: Learning rate
+        weight_decay: Weight decay factor
+        adam_epsilon: Epsilon for Adam optimizer
+        optimizer_type: Type of optimizer ("adamw", "adam", "sgd")
+        
+    Returns:
+        Optimizer instance
+    """
     # Prepare optimizer grouped parameters
     no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight"]
     optimizer_grouped_parameters = [
@@ -202,7 +224,26 @@ def create_optimizer(model, learning_rate=5e-5, weight_decay=0.01, adam_epsilon=
     return optimizer
 
 
-def create_scheduler(optimizer, num_training_steps, num_warmup_steps, warumup_ratio=0.1, scheduler_type="linear"):
+def create_scheduler(
+    optimizer: torch.optim.Optimizer,
+    num_training_steps: int,
+    num_warmup_steps: int,
+    warmup_ratio: float = 0.1,
+    scheduler_type: str = "linear"
+) -> torch.optim.lr_scheduler._LRScheduler:
+    """
+    Create learning rate scheduler.
+    
+    Args:
+        optimizer: Optimizer to schedule
+        num_training_steps: Total number of training steps
+        num_warmup_steps: Number of warmup steps (if None, uses warmup_ratio)
+        warmup_ratio: Ratio of warmup steps to total steps
+        scheduler_type: Type of scheduler ("linear" or "cosine")
+        
+    Returns:
+        Learning rate scheduler
+    """
     num_warmup_steps = int(num_training_steps * warmup_ratio)
     
     if scheduler_type.lower() == "linear":
@@ -225,40 +266,71 @@ def create_scheduler(optimizer, num_training_steps, num_warmup_steps, warumup_ra
     
     return scheduler
 
+
 class ModelConfig:
     """Configuration class for model training."""
+    
     def __init__(
         self,
-        model_name="t5-small",
-        learning_rate=5e-5,
-        batch_size=8,
-        num_epochs=3,
-        max_source_length=512,
-        max_target_length=256,
-        weight_decay=0.01,
-        warmup_ratio=0.1,
-        gradient_accumulation_steps=1,
-        max_grad_norm=1.0,
-        seed=42,
-        save_steps=500,
-        eval_steps=500,
-        logging_steps=100,
-        save_total_limit=3,
-        output_dir="./output",
-        use_8bit=False,
-        gradient_checkpointing=False,
-        freeze_encoder=False,
-        freeze_embeddings=False,
-        lora_config=None,
-        optimizer_type="adamw",
-        scheduler_type="linear",
-        fp16=False,
-        num_beams=4,
-        early_stopping=True,
-        device=None
+        model_name: str = "t5-small",
+        learning_rate: float = 5e-5,
+        batch_size: int = 8,
+        num_epochs: int = 3,
+        max_source_length: int = 512,
+        max_target_length: int = 256,
+        weight_decay: float = 0.01,
+        warmup_ratio: float = 0.1,
+        gradient_accumulation_steps: int = 1,
+        max_grad_norm: float = 1.0,
+        seed: int = 42,
+        save_steps: int = 500,
+        eval_steps: int = 500,
+        logging_steps: int = 100,
+        save_total_limit: int = 3,
+        output_dir: str = "./output",
+        use_8bit: bool = False,
+        gradient_checkpointing: bool = False,
+        freeze_encoder: bool = False,
+        freeze_embeddings: bool = False,
+        lora_config: Optional[Dict] = None,
+        optimizer_type: str = "adamw",
+        scheduler_type: str = "linear",
+        fp16: bool = False,
+        num_beams: int = 4,
+        early_stopping: bool = True,
+        device: Optional[str] = None
     ):
         """
         Initialize model configuration.
+        
+        Args:
+            model_name: Name of the pre-trained model
+            learning_rate: Learning rate for optimization
+            batch_size: Training batch size
+            num_epochs: Number of training epochs
+            max_source_length: Maximum length for source sequences
+            max_target_length: Maximum length for target sequences
+            weight_decay: Weight decay for regularization
+            warmup_ratio: Ratio of warmup steps
+            gradient_accumulation_steps: Steps to accumulate gradients
+            max_grad_norm: Maximum gradient norm for clipping
+            seed: Random seed for reproducibility
+            save_steps: Save checkpoint every N steps
+            eval_steps: Evaluate every N steps
+            logging_steps: Log every N steps
+            save_total_limit: Maximum number of checkpoints to keep
+            output_dir: Directory to save outputs
+            use_8bit: Use 8-bit quantization
+            gradient_checkpointing: Enable gradient checkpointing
+            freeze_encoder: Freeze encoder layers
+            freeze_embeddings: Freeze embedding layers
+            lora_config: LoRA configuration dictionary
+            optimizer_type: Type of optimizer
+            scheduler_type: Type of learning rate scheduler
+            fp16: Use mixed precision training
+            num_beams: Number of beams for generation
+            early_stopping: Use early stopping in generation
+            device: Device to use (None for auto-detection)
         """
         self.model_name = model_name
         self.learning_rate = learning_rate
@@ -288,15 +360,17 @@ class ModelConfig:
         self.early_stopping = early_stopping
         self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
         self.model_type = get_model_type(model_name)
-
-    def __repr__(self):
+    
+    def __repr__(self) -> str:
+        """String representation of configuration."""
         config_str = "ModelConfig(\n"
         for key, value in self.__dict__.items():
             config_str += f"  {key}={value},\n"
         config_str += ")"
         return config_str
-
-    def to_dict(self):
+    
+    def to_dict(self) -> Dict:
+        """Convert configuration to dictionary."""
         return self.__dict__.copy()
 
 
@@ -313,4 +387,4 @@ def set_seed(seed: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     
-    logger.ingo(f"Random seed set to: {seed}")
+    logger.info(f"Random seed set to {seed}")
