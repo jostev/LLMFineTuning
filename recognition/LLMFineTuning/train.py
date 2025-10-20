@@ -160,8 +160,26 @@ def main():
         print(f"Train Loss: {running/len(train_loader):.4f}")
         print(f"Val Loss: {val_loss:.4f}")
 
+        # Save per-epoch model
+        ckpt_dir = out_dir / f"epoch{epoch}"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        model.save_pretrained(ckpt_dir.as_posix())
+        tokenizer.save_pretrained(ckpt_dir.as_posix())
 
-
+        # Append log
+        with open((out_dir / "log.txt").as_posix(), "a", encoding="utf-8") as f:
+            f.write(
+                f"epoch\t{epoch}\ttrain_avg_loss\t{running / max(1, len(train_loader)):.6f}\tval_loss\t{val_loss:.6f}\n"
+            )
+        
+        # Track best model
+        if val_loss < best_val:
+            best_val = val_loss
+            for f in best_dir.iterdir():
+                if f.is_file():
+                    f.unlink()
+            model.save_pretrained(best_dir.as_posix())
+            tokenizer.save_pretrained(best_dir.as_posix())
 
 
 if __name__ == "__main__":
