@@ -74,8 +74,8 @@ def get_model_type(model_name: str) -> str:
 def load_model_and_tokenizer(
     model_name: str,
     device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    use_8bit: bool = false,
-    gradient_checkpointing: bool = false
+    use_8bit: bool = False,
+    gradient_checkpointing: bool = False
 ) -> Tuple[torch.nn.Module, AutoTokenizer, str]:
     """
     Load a pre-trained model and tokenizer.
