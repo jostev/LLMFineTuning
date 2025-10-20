@@ -5,9 +5,51 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
+import json
+import evaluate
 from modules import *
 from dataset import get_dataloaders
 from tqdm.auto import tqdm
+
+rouge = evaluate.load("rouge")
+
+def decode_labels(labels, pad_id):
+    """Decode labels by replacing -100 with pad_id."""
+    labels = labels.clone()
+    labels[labels == -100] = pad_id
+    return labels
+
+def compute_rouge(model, tokenizer, dataloader, device, num_beams=4, max_new_tokens=128):
+    """Compute ROUGE scores on the dataset using the model."""
+    model.eval()  # Set model to evaluation mode
+    preds = []
+    refs = []
+    with torch.no_grad():
+        for batch in dataloader:
+            # Move any tensor values in batch to target device
+            batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+
+            # Generate predictions from model
+            gen = model.generate(
+                input_ids=batch["input_ids"],
+                attention_mask=batch["attention_mask"],
+                num_beams=num_beams,
+                max_new_tokens=max_new_tokens
+            )
+
+            # Decode generated token ids to text
+            pred_text = tokenizer.batch_decode(gen, skip_special_tokens=True)
+
+            # Replace -100 in labels with pad token id and decode references to text
+            ref_ids = decode_labels(batch["labels"], tokenizer.pad_token_id)
+            ref_text = tokenizer.batch_decode(ref_ids, skip_special_tokens=True)
+
+            preds.extend(pred_text)
+            refs.extend(ref_text)
+
+    # Compute ROUGE and convert numpy/torch types to python floats
+    scores = rouge.compute(predictions=preds, references=refs, use_stemmer=True)
+    return {k: float(v) for k, v in scores.items()}
 
 def move_to_device(batch, device):
     """Move batch of data to target device."""
@@ -60,6 +102,10 @@ def main():
     parser.add_argument("--lora_r", type=int, default=0)
     parser.add_argument("--lora_alpha", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.1)
+
+    parser.add_argument("--eval_num_beams", type=int, default=4)
+    parser.add_argument("--eval_max_new_tokens", type=int, default=128)
+    parser.add_argument("--select_by", type=str, default="loss", choices=["loss","rougeL"])
 
     args = parser.parse_args()
 
@@ -166,8 +212,13 @@ def main():
 
         print(torch.cuda.mem_get_info())
 
-        # End of epoch evaluation            
+        # End of epoch evaluation: compute loss and ROUGE          
         val_loss = evaluate(model, val_loader, device, fp16=args.fp16)
+        metrics = compute_rouge(
+            model, tokenizer, val_loader, device,
+            num_beams=args.eval_num_beams,
+            max_new_tokens=args.eval_max_new_tokens
+        )
 
         # Epoch logging
         print(f"Epoch {epoch}/{args.epochs}")
@@ -180,20 +231,33 @@ def main():
         model.save_pretrained(ckpt_dir.as_posix())
         tokenizer.save_pretrained(ckpt_dir.as_posix())
 
-        # Append log
-        with open((out_dir / "log.txt").as_posix(), "a", encoding="utf-8") as f:
-            f.write(
-                f"epoch\t{epoch}\ttrain_avg_loss\t{running / max(1, len(train_loader)):.6f}\tval_loss\t{val_loss:.6f}\n"
-            )
+        row = {
+            "epoch": epoch,
+            "train_avg_loss": round(running / max(1, len(train_loader)), 6),
+            "val_loss": round(val_loss, 6),
+            **{k: round(v, 6) for k, v in metrics.items()}
+        }
+        with open((out_dir / "metrics.jsonl").as_posix(), "a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+
+        with open((ckpt_dir / "metrics.json").as_posix(), "w", encoding="utf-8") as f:
+            json.dump(row, f, indent=2)
         
         # Track best model
-        if val_loss < best_val:
-            best_val = val_loss
+        key = "val_loss" if args.select_by == "loss" else "rougeL"
+        better = (val_loss < best_val) if args.select_by == "loss" else (metrics.get("rougeL", 0.0) > locals().get("best_rougel", 0.0))
+        if better:
+            if args.select_by == "loss":
+                best_val = val_loss
+            else:
+                best_rougel = metrics.get("rougeL", 0.0)
             for f in best_dir.iterdir():
                 if f.is_file():
                     f.unlink()
             model.save_pretrained(best_dir.as_posix())
             tokenizer.save_pretrained(best_dir.as_posix())
+            with open((best_dir / "metrics.json").as_posix(), "w", encoding="utf-8") as f:
+                json.dump(row, f, indent=2)
 
 
 if __name__ == "__main__":
