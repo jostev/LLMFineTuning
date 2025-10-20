@@ -19,10 +19,28 @@ from typing import Dict, Optional, Tuple
 from peft import get_peft_model, LoraConfig, TaskType
 import logging
 
-# Model registry with supported models
-ENCODER_DECODER_MODELS = {}
+loggig.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-DECODER_ONLY_MODELS = {}
+# Model registry with supported models
+ENCODER_DECODER_MODELS = {
+    "t5-small": "t5-small",
+    "t5-base": "t5-base",
+    "t5-large": "t5-large",
+    "flan-t5-small": "google/flan-t5-small",
+    "flan-t5-base": "google/flan-t5-base",
+    "flan-t5-large": "google/flan-t5-large",
+    "flan-t5-xl": "google/flan-t5-xl",
+}
+
+DECODER_ONLY_MODELS = {
+    "gpt2": "gpt2",
+    "gpt2-medium": "gpt2-medium",
+    "gpt2-large": "gpt2-large",
+    "gpt2-xl": "gpt2-xl",
+}
+
+ALL_MODELS = {**ENCODER_DECODER_MODELS, **DECODER_ONLY_MODELS}
 
 def load_model_and_tokenizer():
     pass
