@@ -17,3 +17,18 @@ TODO: include 3-5 representative input–output examples with a short error anal
 To run:
 1. Create a virtual environment
 2. Install packages in `requirements.txt`
+
+TODO LIST:
+- ROUGE eval
+- predict.py
+- qualitative examples
+- plot and persist training curves
+- log experiment metadata
+- tiny ablation
+- clean repo structure
+- finish README.md
+- polish
+    - check determinism
+    - decode sanity
+    - save to single checkpoint folder
+- ensure proper commits
