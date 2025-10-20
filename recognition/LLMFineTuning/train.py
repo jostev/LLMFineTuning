@@ -36,6 +36,40 @@ def main():
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    model, tokenizer, model_type = load_model_and_tokenizer(
+        args.model_name,
+        device=device,
+        use_8bit=args.use_8bit,
+        gradient_checkpointing=args.grad_checkpointing
+    )
+    lora_config = None
+    if args.lora_r and args.lora_r > 0:
+        lora_config = {
+            "r": args.lora_r,
+            "lora_alpha": args.lora_alpha,
+            "lora_dropout": args.lora_dropout
+        }
+    model = prepare_model_for_training(
+        model,
+        freeze_encoder=args.freeze_encoder,
+        freeze_embeddings=args.freeze_embeddings,
+        lora_config=lora_config
+    )
+    train_loader, val_loader, _ = get_dataloaders(
+        tokenizer,
+        batch_size=args.batch_size,
+        max_source_length=args.max_source_length,
+        max_target_length=args.max_target_length,
+        model_type=model_type
+    )
+    print(f"Training on device: {device}")
+    print(f"Number of training samples: {len(train_loader.dataset)}")
+    print(f"Number of validation samples: {len(val_loader.dataset)}")
+    print(f"Number of trainable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
+    print(f"Number of total parameters: {sum(p.numel() for p in model.parameters())}")
+    print(model)
+    print(tokenizer)
+
 
 if __name__ == "__main__":
     main()
