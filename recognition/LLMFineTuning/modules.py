@@ -202,8 +202,28 @@ def create_optimizer(model, learning_rate=5e-5, weight_decay=0.01, adam_epsilon=
     return optimizer
 
 
-def create_scheduler():
-    pass
+def create_scheduler(optimizer, num_training_steps, num_warmup_steps, warumup_ratio=0.1, scheduler_type="linear"):
+    num_warmup_steps = int(num_training_steps * warmup_ratio)
+    
+    if scheduler_type.lower() == "linear":
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps
+        )
+    elif scheduler_type.lower() == "cosine":
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=num_warmup_steps,
+            num_training_steps=num_training_steps
+        )
+    else:
+        raise ValueError(f"Unimplemented scheduler type: {scheduler_type}")
+
+    logger.info(f"Scheduler created: {scheduler_type}")
+    logger.info(f"Warmup steps: {num_warmup_steps} / {num_training_steps}")
+    
+    return scheduler
 
 class ModelConfig:
     """Configuration class for model training."""
