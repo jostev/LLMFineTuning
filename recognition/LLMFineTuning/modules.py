@@ -158,8 +158,48 @@ def prepare_model_for_training(model, freeze_encoder, freeze_embeddings, lora_co
     return model
 
 
-def create_optimizer():
-    pass
+def create_optimizer(model, learning_rate=5e-5, weight_decay=0.01, adam_epsilon=1e-8, optimizer_type="adamw"):
+    # Prepare optimizer grouped parameters
+    no_decay = ["bias", "LayerNorm.weight", "layer_norm.weight"]
+    optimizer_grouped_parameters = [
+        {
+            "params": [p for n, p in model.named_parameters() 
+                      if not any(nd in n for nd in no_decay) and p.requires_grad],
+            "weight_decay": weight_decay,
+        },
+        {
+            "params": [p for n, p in model.named_parameters() 
+                      if any(nd in n for nd in no_decay) and p.requires_grad],
+            "weight_decay": 0.0,
+        },
+    ]
+    
+    if optimizer_type.lower() == "adamw":
+        optimizer = torch.optim.AdamW(
+            optimizer_grouped_parameters,
+            lr=learning_rate,
+            eps=adam_epsilon
+        )
+    elif optimizer_type.lower() == "adam":
+        optimizer = torch.optim.Adam(
+            optimizer_grouped_parameters,
+            lr=learning_rate,
+            eps=adam_epsilon
+        )
+    elif optimizer_type.lower() == "sgd":
+        optimizer = torch.optim.SGD(
+            optimizer_grouped_parameters,
+            lr=learning_rate,
+            momentum=0.9
+        )
+    else:
+        raise ValueError(f"Unimplemented optimizer type: {optimizer_type}")
+    
+    logger.info(f"Optimizer created: {optimizer_type.upper()}")
+    logger.info(f"Learning rate: {learning_rate}")
+    logger.info(f"Weight decay: {weight_decay}")
+    
+    return optimizer
 
 
 def create_scheduler():
