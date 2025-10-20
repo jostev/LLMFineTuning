@@ -133,7 +133,7 @@ def main():
 
     # Training loop
     print("Starting training...")
-    print(torch.cuda.get_mem_info())
+    print(torch.cuda.mem_get_info())
     for epoch in range(1, args.epochs + 1):
         model.train()
         optimizer.zero_grad(set_to_none=True)
@@ -164,7 +164,7 @@ def main():
             # Update progress bar
             pbar.set_postfix({"loss": f"{running / max(1, step):.4f}"})
 
-        print(torch.cuda.get_mem_info())
+        print(torch.cuda.mem_get_info())
 
         # End of epoch evaluation            
         val_loss = evaluate(model, val_loader, device, fp16=args.fp16)
