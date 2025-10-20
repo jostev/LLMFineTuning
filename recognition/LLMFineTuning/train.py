@@ -144,7 +144,7 @@ def main():
 
             # Backward pass with gradient scaling   
             scaler.scale(loss).backward()
-            running += loss.item() * args.grad_accum0
+            running += loss.item() * args.grad_accum
 
             # Optimiser step after gradient accumulation
             if step % args.grad_accum == 0 or step == len(train_loader):
