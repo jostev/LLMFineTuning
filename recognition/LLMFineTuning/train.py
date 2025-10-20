@@ -8,6 +8,29 @@ import numpy as np
 from modules import *
 from dataset import get_dataloaders
 
+def move_to_device(batch, device):
+    """Move batch of data to target device."""
+    out = {}
+    for k, v in batch.items():
+        out[k] = v.to(device, non_blocking=True)
+    return out
+
+def evaluate(model, dataloader, device):
+    """Evaluate model on validation dataset."""
+    model.eval()
+    total_loss = 0.0
+    total_count = 0
+    with torch.no_grad():
+        for batch in dataloader:
+            batch = move_to_device(batch, device)
+            outputs = model(**batch)
+            loss = outputs.loss
+            batch_size = batch['input_ids'].size(0)
+            total_loss += loss.item() * batch_size
+            total_count += batch_size
+    return total_loss / max(1, total_count)
+    
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_name", type=str, default="google/flan-t5-base")
@@ -95,7 +118,49 @@ def main():
         scheduler_type=args.scheduler_type,
     )
     
-    
+    # Mixed precision scaler
+    scaler = torch.amp.GradScaler(enabled=args.fp16)
+
+    # Prepare output
+    out_dir = Path(args.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    best_val = float("inf")
+    best_dir = out_dir / "best"
+    best_dir.mkdir(parents=True, exist_ok=True)
+
+    # Training loop
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        optimizer.zero_grad(set_to_none=True)
+        running = 0.0
+
+        for step, batch in enumerate(train_loader, 1):
+            batch = move_to_device(batch, device)
+
+            # Forward pass with mixed precision    
+            with torch.amp.autocast(device_type="cuda",enabled=args.fp16):
+                outputs = model(**batch)
+                loss = outputs.loss / args.grad_accum
+
+            # Backward pass with gradient scaling   
+            scaler.scale(loss).backward()
+            running += loss.item() * args.grad_accum0
+
+            # Optimiser step after gradient accumulation
+            if step % args.grad_accum == 0 or step == len(train_loader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+                scheduler.step()
+            
+        val_loss = evaluate(model, val_loader, device, fp16=args.fp16)
+        print(f"Epoch {epoch}/{args.epochs}")
+        print(f"Train Loss: {running/len(train_loader):.4f}")
+        print(f"Val Loss: {val_loss:.4f}")
+
+
 
 
 
