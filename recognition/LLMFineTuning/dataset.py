@@ -79,14 +79,8 @@ class BioLaySummDataset(Dataset):
         
         # Extract source and target
         # + adjust field names based on BioLaySumm dataset structure
-        source_text = example.get("source", example.get(
-            "expert_report", 
-            example.get("text", "")
-        ))
-        target_text = example.get("target", example.get(
-            "layperson_summary", 
-            example.get("summary", "")
-        ))
+        source_text = example.get("radiology_report", "")
+        target_text = example.get("layman_report", "")
         
         if self.model_type == "encoder-decoder":
             return self._encode_encoder_decoder(source_text, target_text)
