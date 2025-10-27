@@ -1,17 +1,19 @@
 """Prediction and evaluation script for fine-tuned LLMs."""
 
 import argparse
-import json
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional, cast
 
 import torch
+from torch.utils.data import DataLoader
+import json
+
 import torch.nn as nn
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokenizer
 
 from dataset import get_dataloaders
 from modules import get_model_type
-from utils import compute_rouge, count_parameters
+from utils import compute_rouge, decode_labels, count_parameters, move_to_device
 
 
 def load_model_any(model_path: Path, base_model_name: Optional[str] = None):
@@ -60,6 +62,29 @@ def load_model_any(model_path: Path, base_model_name: Optional[str] = None):
 	if tokenizer.pad_token is None and hasattr(model.config, "eos_token_id"):
 		tokenizer.pad_token = tokenizer.eos_token
 	return model, tokenizer, model_type
+
+
+def sample_predictions(model, tokenizer, dataloader: DataLoader, device, k: int = 5, num_beams=4, max_new_tokens=128) -> List[Dict[str, str]]:
+	model.eval()
+	out: List[Dict[str, str]] = []
+	with torch.no_grad():
+		for batch in dataloader:
+			batch = move_to_device(batch, device)
+			gen_ids = model.generate(
+				input_ids=batch["input_ids"],
+				attention_mask=batch["attention_mask"],
+				num_beams=num_beams,
+				max_new_tokens=max_new_tokens,
+			)
+			preds = tokenizer.batch_decode(gen_ids, skip_special_tokens=True)
+			refs = tokenizer.batch_decode(decode_labels(batch["labels"], tokenizer.pad_token_id), skip_special_tokens=True)
+			srcs = tokenizer.batch_decode(batch["input_ids"], skip_special_tokens=True)
+
+			for s, p, r in zip(srcs, preds, refs):
+				out.append({"source": s, "prediction": p, "reference": r})
+				if len(out) >= k:
+					return out
+	return out
 
 
 def main():
@@ -132,6 +157,31 @@ def main():
 			Path(args.metrics_out).parent.mkdir(parents=True, exist_ok=True)
 			with open(args.metrics_out, "w", encoding="utf-8") as f:
 				json.dump(result, f, indent=2)
+
+		# Qualitative samples
+		samples = sample_predictions(
+			model,
+			tokenizer,
+			dataloader,
+			device,
+			k=args.samples,
+			num_beams=args.num_beams,
+			max_new_tokens=args.max_new_tokens,
+		)
+
+		if samples:
+			print("\nSample predictions:")
+			for i, ex in enumerate(samples, 1):
+				print(f"[{i}] Source: {ex['source'][:200].replace('\n',' ')}")
+				print(f"    Pred:   {ex['prediction'][:200].replace('\n',' ')}")
+				print(f"    Ref:    {ex['reference'][:200].replace('\n',' ')}")
+
+		if args.samples_out:
+			outp = Path(args.samples_out)
+			outp.parent.mkdir(parents=True, exist_ok=True)
+			with open(outp, "w", encoding="utf-8") as f:
+				for ex in samples:
+					f.write(json.dumps(ex) + "\n")
 
 
 if __name__ == "__main__":
