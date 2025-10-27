@@ -3,8 +3,42 @@
 import argparse
 import json
 from pathlib import Path
+from typing import Dict, List, Tuple, Optional, cast
 
 import torch
+import torch.nn as nn
+from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokenizer
+
+from modules import get_model_type
+
+
+def load_model_any(model_path: Path, base_model_name: Optional[str] = None):
+	"""Load either a full model directory or a LoRA adapter on top of a base model.
+
+	Heuristic: if adapter_config.json exists in model_path, treat as LoRA adapter.
+	"""
+	# Full model directory or HF hub id
+	model_id = model_path.as_posix()
+	# Infer model type from name
+	try:
+		model_type = get_model_type(model_id)
+	except Exception:
+		# Fallback to base_model_name if provided
+		if base_model_name:
+			model_type = get_model_type(base_model_name)
+		else:
+			# Default guess: encoder-decoder for T5-like
+			model_type = "encoder-decoder"
+
+	if model_type == "encoder-decoder":
+		model = AutoModelForSeq2SeqLM.from_pretrained(model_id)
+	else:
+		model = AutoModelForCausalLM.from_pretrained(model_id)
+
+	tokenizer = AutoTokenizer.from_pretrained(model_id)
+	if tokenizer.pad_token is None and hasattr(model.config, "eos_token_id"):
+		tokenizer.pad_token = tokenizer.eos_token
+	return model, tokenizer, model_type
 
 
 def main():
@@ -25,7 +59,12 @@ def main():
 	args = parser.parse_args()
 
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-	print(f"Using device: {device}")
+
+	model_path = Path(args.model_path)
+	model, tokenizer, model_type = load_model_any(model_path, base_model_name=args.base_model_name)
+	cast(nn.Module, model).to(device)
+
+	print(f"Successfully loaded model {args.model_path} ({model_type}) on {device}.")
 
 
 if __name__ == "__main__":
