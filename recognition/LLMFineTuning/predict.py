@@ -1,4 +1,26 @@
-"""Prediction and evaluation script for fine-tuned LLMs."""
+"""Prediction and evaluation script for fine-tuned LLMs.
+
+Supports:
+- Loading a full fine-tuned model directory (e.g., runs/.../best or runs/.../epochN)
+- Loading a LoRA adapter on top of a base model (if adapter_config.json present)
+- Running generation on a chosen split (default: test)
+- Computing ROUGE metrics
+- Saving a few qualitative examples for error analysis
+
+Example usages:
+  python predict.py \
+	--model_path runs/project13/best \
+	--split test \
+	--num_beams 4 \
+	--max_new_tokens 128 \
+	--samples_out runs/project13/pred_samples.jsonl
+
+  # If the checkpoint is a LoRA adapter directory:
+  python predict.py \
+	--model_path runs/p13_flan_t5b_lora8_rouge/epoch3 \
+	--base_model_name google/flan-t5-base \
+	--split test
+"""
 
 import argparse
 from pathlib import Path
@@ -94,6 +116,7 @@ def sample_predictions(model, tokenizer, dataloader: DataLoader, device, k: int 
 				if len(out) >= k:
 					return out
 	return out
+
 
 def main():
 	parser = argparse.ArgumentParser(description="Evaluate a fine-tuned model and run predictions.")
