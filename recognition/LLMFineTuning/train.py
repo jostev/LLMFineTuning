@@ -63,6 +63,11 @@ def main():
 
     args = parser.parse_args()
 
+    # Validate 8-bit training requirement
+    if args.use_8bit and not torch.cuda.is_available():
+        print("8-bit training requires a CUDA-capable device. Disabling 8-bit mode.")
+        args.use_8bit = False
+
     # Set seed and device
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -137,7 +142,8 @@ def main():
 
     # Training loop
     print("Starting training...")
-    print(torch.cuda.mem_get_info())
+    if torch.cuda.is_available():
+        print(torch.cuda.mem_get_info())
     for epoch in range(1, args.epochs + 1):
         model.train()
         optimizer.zero_grad(set_to_none=True)
@@ -148,7 +154,11 @@ def main():
             batch = move_to_device(batch, device)
 
             # Forward pass with mixed precision    
+<<<<<<< HEAD
             with autocast(enabled=args.fp16):
+=======
+            with autocast(enabled=args.fp16 and torch.cuda.is_available()):
+>>>>>>> 606c19cd889541900c4e8b00ed6edf610640c4fc
                 outputs = model(**batch)
                 loss = outputs.loss / args.grad_accum
 
