@@ -1,7 +1,8 @@
-"""Plot utilities for training curves (initial version).
+"""Plot utilities for training curves.
 
-This minimal script reads metrics.jsonl produced by train.py and saves a
-single plot for training/validation loss. A follow-up commit will add ROUGE plots.
+Reads a metrics.jsonl produced by train.py and saves plots for
+- training/validation loss
+- ROUGE metrics (rouge1, rouge2, rougeL, rougeLsum)
 
 Usage:
     python plots.py --run_dir runs/project13 --out_dir runs/project13/figures
@@ -57,6 +58,43 @@ def plot_loss(rows: List[Dict], out_dir: Path) -> None:
     plt.close()
 
 
+def plot_rouge(rows: List[Dict], out_dir: Path) -> None:
+    """Save ROUGE plots: rougeL, and combined rouge1/rouge2/rougeLsum."""
+    if not rows:
+        return
+    epochs = [r.get("epoch", i + 1) for i, r in enumerate(rows)]
+    rougeL = [r.get("rougeL") for r in rows]
+    rouge1 = [r.get("rouge1") for r in rows]
+    rouge2 = [r.get("rouge2") for r in rows]
+    rougeLsum = [r.get("rougeLsum") for r in rows]
+
+    if any(v is not None for v in rougeL):
+        plt.figure(figsize=(6, 4))
+        plt.plot(epochs, rougeL, label="rougeL", marker="o")
+        plt.xlabel("Epoch")
+        plt.ylabel("ROUGE-L")
+        plt.title("ROUGE-L over epochs")
+        plt.tight_layout()
+        plt.savefig(out_dir / "rougeL.png", dpi=150)
+        plt.close()
+
+    if any(v is not None for v in (rouge1 + rouge2 + rougeLsum)):
+        plt.figure(figsize=(6, 4))
+        if any(v is not None for v in rouge1):
+            plt.plot(epochs, rouge1, label="rouge1", marker="o")
+        if any(v is not None for v in rouge2):
+            plt.plot(epochs, rouge2, label="rouge2", marker="o")
+        if any(v is not None for v in rougeLsum):
+            plt.plot(epochs, rougeLsum, label="rougeLsum", marker="o")
+        plt.xlabel("Epoch")
+        plt.ylabel("ROUGE")
+        plt.title("ROUGE metrics over epochs")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(out_dir / "rouge_all.png", dpi=150)
+        plt.close()
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--run_dir", type=str, required=True, help="Directory containing metrics.jsonl")
@@ -69,4 +107,5 @@ if __name__ == "__main__":
 
     rows = _read_jsonl(run_dir / "metrics.jsonl")
     plot_loss(rows, out_dir)
+    plot_rouge(rows, out_dir)
     print(f"Saved figures to: {out_dir}")
