@@ -9,7 +9,9 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokenizer
 
+from dataset import get_dataloaders
 from modules import get_model_type
+from utils import compute_rouge, count_parameters
 
 
 def load_model_any(model_path: Path, base_model_name: Optional[str] = None):
@@ -83,7 +85,53 @@ def main():
 	model, tokenizer, model_type = load_model_any(model_path, base_model_name=args.base_model_name)
 	cast(nn.Module, model).to(device)
 
-	print(f"Successfully loaded model {args.model_path} ({model_type}) on {device}.")
+	if args.mode == "eval":
+		# Build dataloaders (we only need one split, but get_dataloaders builds all)
+		train_loader, val_loader, test_loader = get_dataloaders(
+			tokenizer,
+			batch_size=args.batch_size,
+			max_source_length=args.max_source_length,
+			max_target_length=args.max_target_length,
+			model_type=model_type,
+			num_workers=0,
+		)
+		dl_map = {"train": train_loader, "validation": val_loader, "test": test_loader}
+		dataloader = dl_map[args.split]
+
+		# Compute ROUGE
+		scores = compute_rouge(
+			model,
+			tokenizer,
+			dataloader,
+			device,
+			fp16=False,
+			num_beams=args.num_beams,
+			max_new_tokens=args.max_new_tokens,
+		)
+
+		total_params, trainable_params = count_parameters(model)
+
+		result = {
+			"model_path": args.model_path,
+			"base_model_name": args.base_model_name,
+			"split": args.split,
+			"model_type": model_type,
+			"num_beams": args.num_beams,
+			"max_new_tokens": args.max_new_tokens,
+			"rouge": scores,
+			"parameters": {
+				"total": total_params,
+				"trainable": trainable_params,
+			},
+		}
+
+		print(json.dumps(result, indent=2))
+
+		# Save metrics if requested
+		if args.metrics_out:
+			Path(args.metrics_out).parent.mkdir(parents=True, exist_ok=True)
+			with open(args.metrics_out, "w", encoding="utf-8") as f:
+				json.dump(result, f, indent=2)
 
 
 if __name__ == "__main__":
