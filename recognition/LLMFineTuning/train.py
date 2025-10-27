@@ -2,6 +2,7 @@
 import argparse
 import os
 from pathlib import Path
+import time
 import torch
 from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
@@ -11,6 +12,7 @@ from modules import *
 from dataset import get_dataloaders
 from utils import compute_rouge, move_to_device
 from tqdm.auto import tqdm
+from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokenizer
 
 def evaluate_loss(model, dataloader, device):
     """Evaluate model on validation dataset."""
@@ -60,6 +62,7 @@ def main():
     parser.add_argument("--eval_num_beams", type=int, default=4)
     parser.add_argument("--eval_max_new_tokens", type=int, default=128)
     parser.add_argument("--select_by", type=str, default="loss", choices=["loss","rougeL"])
+    parser.add_argument("--eval_test_after_train", action="store_true", help="Evaluate best checkpoint on test split after training")
 
     args = parser.parse_args()
 
@@ -100,7 +103,7 @@ def main():
     model.config.use_cache = False  # Disable cache for training
 
     # Build dataloaders
-    train_loader, val_loader, _ = get_dataloaders(
+    train_loader, val_loader, test_loader = get_dataloaders(
         tokenizer,
         batch_size=args.batch_size,
         max_source_length=args.max_source_length,
@@ -141,6 +144,13 @@ def main():
     best_rougel = -1.0
 
     # Training loop
+    t0 = time.time()
+    gpu_name = None
+    total_vram_gb = None
+    if torch.cuda.is_available():
+        prop = torch.cuda.get_device_properties(0)
+        gpu_name = prop.name
+        total_vram_gb = round(prop.total_memory / (1024**3), 2)
     print("Starting training...")
     if torch.cuda.is_available():
         print(torch.cuda.mem_get_info())
@@ -154,11 +164,7 @@ def main():
             batch = move_to_device(batch, device)
 
             # Forward pass with mixed precision    
-<<<<<<< HEAD
             with autocast(enabled=args.fp16):
-=======
-            with autocast(enabled=args.fp16 and torch.cuda.is_available()):
->>>>>>> 606c19cd889541900c4e8b00ed6edf610640c4fc
                 outputs = model(**batch)
                 loss = outputs.loss / args.grad_accum
 
@@ -228,6 +234,46 @@ def main():
             tokenizer.save_pretrained(best_dir.as_posix())
             with open((best_dir / "metrics.json").as_posix(), "w", encoding="utf-8") as f:
                 json.dump(row, f, indent=2)
+
+        # Optionally evaluate best checkpoint on test split
+        test_metrics = None
+        if args.eval_test_after_train:
+            print("\nEvaluating best checkpoint on test split...")
+            best_model_path = best_dir.as_posix()
+            if model_type == "encoder-decoder":
+                best_model = AutoModelForSeq2SeqLM.from_pretrained(best_model_path)
+            else:
+                best_model = AutoModelForCausalLM.from_pretrained(best_model_path)
+            best_tok = AutoTokenizer.from_pretrained(best_model_path)
+            best_model.to(device)
+            test_metrics = compute_rouge(
+                best_model, best_tok, test_loader, device, args.fp16,
+                num_beams=args.eval_num_beams, max_new_tokens=args.eval_max_new_tokens
+            )
+            with open((best_dir / "test_metrics.json").as_posix(), "w", encoding="utf-8") as f:
+                json.dump(test_metrics, f, indent=2)
+            with open((out_dir / "test_metrics.json").as_posix(), "w", encoding="utf-8") as f:
+                json.dump(test_metrics, f, indent=2)
+
+        # Write training summary
+        total_time_sec = int(time.time() - t0)
+        strategy = "peft-lora" if ("lora_config" in locals() and lora_config) else "full-finetune"
+        summary = {
+            "model_name": args.model_name,
+            "model_type": model_type,
+            "fine_tuning_strategy": strategy,
+            "epochs": args.epochs,
+            "select_by": args.select_by,
+            "fp16": bool(args.fp16),
+            "gpu_name": gpu_name,
+            "total_vram_gb": total_vram_gb,
+            "total_training_time_sec": total_time_sec,
+            "best_dir": best_dir.as_posix(),
+            "val_best": (best_val if args.select_by == "loss" else locals().get("best_rougel", None)),
+            "test_metrics": test_metrics,
+        }
+        with open((out_dir / "training_summary.json").as_posix(), "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2)
 
 
 if __name__ == "__main__":
