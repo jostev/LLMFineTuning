@@ -7,60 +7,12 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 import json
-import evaluate
 from modules import *
 from dataset import get_dataloaders
+from utils import compute_rouge, move_to_device
 from tqdm.auto import tqdm
 
-rouge = evaluate.load("rouge")
-
-def decode_labels(labels, pad_id):
-    """Decode labels by replacing -100 with pad_id."""
-    labels = labels.clone()
-    labels[labels == -100] = pad_id
-    return labels
-
-def compute_rouge(model, tokenizer, dataloader, device, fp16, num_beams=4, max_new_tokens=128):
-    """Compute ROUGE scores on the dataset using the model."""
-    model.eval()  # Set model to evaluation mode
-    preds = []
-    refs = []
-    with torch.no_grad():
-        for batch in dataloader:
-            # Move any tensor values in batch to target device
-            batch = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
-
-            # Generate predictions from model
-            with autocast(enabled=torch.cuda.is_available() and fp16):
-                gen = model.generate(
-                    input_ids=batch["input_ids"],
-                    attention_mask=batch["attention_mask"],
-                    num_beams=num_beams,
-                    max_new_tokens=max_new_tokens
-                )
-
-            # Decode generated token ids to text
-            pred_text = tokenizer.batch_decode(gen, skip_special_tokens=True)
-
-            # Replace -100 in labels with pad token id and decode references to text
-            ref_ids = decode_labels(batch["labels"], tokenizer.pad_token_id)
-            ref_text = tokenizer.batch_decode(ref_ids, skip_special_tokens=True)
-
-            preds.extend(pred_text)
-            refs.extend(ref_text)
-
-    # Compute ROUGE and convert numpy/torch types to python floats
-    scores = rouge.compute(predictions=preds, references=refs, use_stemmer=True)
-    return {k: float(v) for k, v in scores.items()}
-
-def move_to_device(batch, device):
-    """Move batch of data to target device."""
-    out = {}
-    for k, v in batch.items():
-        out[k] = v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
-    return out
-
-def evaluate(model, dataloader, device):
+def evaluate_loss(model, dataloader, device):
     """Evaluate model on validation dataset."""
     model.eval()
     total_loss = 0.0
@@ -196,7 +148,7 @@ def main():
             batch = move_to_device(batch, device)
 
             # Forward pass with mixed precision    
-            with autocast(device_type="cuda", enabled=args.fp16):
+            with autocast(enabled=args.fp16):
                 outputs = model(**batch)
                 loss = outputs.loss / args.grad_accum
 
@@ -219,7 +171,7 @@ def main():
         print(torch.cuda.mem_get_info())
 
         # End of epoch evaluation: compute loss and ROUGE          
-        val_loss = evaluate(model, val_loader, device)
+        val_loss = evaluate_loss(model, val_loader, device)
         metrics = compute_rouge(
             model, tokenizer, val_loader, device, args.fp16,
             num_beams=args.eval_num_beams,
