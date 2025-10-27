@@ -1,4 +1,4 @@
-"""Prediction and evaluation script for fine-tuned LLMs."""
+"Prediction and evaluation script for fine-tuned LLMs."
 
 import argparse
 from pathlib import Path
@@ -13,7 +13,7 @@ from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokeni
 
 from dataset import get_dataloaders
 from modules import get_model_type
-from utils import compute_rouge, decode_labels, count_parameters, move_to_device
+from utils import compute_rouge, decode_labels, count_parameters, move_to_device, format_input_text
 
 
 def load_model_any(model_path: Path, base_model_name: Optional[str] = None):
@@ -85,7 +85,6 @@ def sample_predictions(model, tokenizer, dataloader: DataLoader, device, k: int 
 				if len(out) >= k:
 					return out
 	return out
-
 
 def main():
 	parser = argparse.ArgumentParser(description="Evaluate a fine-tuned model and run predictions.")
@@ -182,6 +181,34 @@ def main():
 			with open(outp, "w", encoding="utf-8") as f:
 				for ex in samples:
 					f.write(json.dumps(ex) + "\n")
+	else:
+		# Generate from a single input (stdin or --input_text)
+		raw = args.input_text
+		if raw is None:
+			try:
+				raw = input().strip()
+			except EOFError:
+				raw = ""
+		if not raw:
+			print("", end="")
+			return
+
+		prompt = format_input_text(raw, model_type)
+		inputs = tokenizer(
+			prompt,
+			return_tensors="pt",
+			truncation=True,
+			max_length=args.max_source_length,
+		)
+		inputs = {k: v.to(device) for k, v in inputs.items()}
+		with torch.no_grad():
+			gen = model.generate(
+				**inputs,
+				num_beams=args.num_beams,
+				max_new_tokens=args.max_new_tokens,
+			)
+		out_text = tokenizer.decode(gen[0], skip_special_tokens=True)
+		print(out_text)
 
 
 if __name__ == "__main__":
