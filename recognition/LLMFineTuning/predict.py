@@ -17,6 +17,25 @@ def load_model_any(model_path: Path, base_model_name: Optional[str] = None):
 
 	Heuristic: if adapter_config.json exists in model_path, treat as LoRA adapter.
 	"""
+	adapter_cfg = model_path / "adapter_config.json"
+
+	if adapter_cfg.exists():
+		# LoRA adapter case
+		if base_model_name is None:
+			raise ValueError("Detected LoRA adapter directory but --base_model_name was not provided.")
+		model_type = get_model_type(base_model_name)
+		if model_type == "encoder-decoder":
+			base = AutoModelForSeq2SeqLM.from_pretrained(base_model_name)
+		else:
+			base = AutoModelForCausalLM.from_pretrained(base_model_name)
+		try:
+			from peft import PeftModel  # type: ignore
+		except ImportError:
+			raise RuntimeError("peft is required to load LoRA adapters. Install with `pip install peft`. ")
+		model = PeftModel.from_pretrained(base, model_path.as_posix())
+		tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+		return model, tokenizer, model_type
+
 	# Full model directory or HF hub id
 	model_id = model_path.as_posix()
 	# Infer model type from name
@@ -43,7 +62,7 @@ def load_model_any(model_path: Path, base_model_name: Optional[str] = None):
 
 def main():
 	parser = argparse.ArgumentParser(description="Evaluate a fine-tuned model and run predictions.")
-	parser.add_argument("--model_path", type=str, required=True, help="Path to model dir (or HF id).")
+	parser.add_argument("--model_path", type=str, required=True, help="Path to model dir (or HF id). If LoRA adapter, pass directory containing adapter_config.json")
 	parser.add_argument("--base_model_name", type=str, default=None, help="Base model name if loading a LoRA adapter (e.g., google/flan-t5-base)")
 	parser.add_argument("--mode", type=str, default="eval", choices=["eval", "generate"], help="Run dataset evaluation or single-text generation")
 	parser.add_argument("--split", type=str, default="test", choices=["train", "validation", "test"], help="Dataset split for eval mode")
