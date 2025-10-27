@@ -1,4 +1,4 @@
-"Prediction and evaluation script for fine-tuned LLMs."
+"""Prediction and evaluation script for fine-tuned LLMs."""
 
 import argparse
 from pathlib import Path
@@ -14,6 +14,15 @@ from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokeni
 from dataset import get_dataloaders
 from modules import get_model_type
 from utils import compute_rouge, decode_labels, count_parameters, move_to_device, format_input_text
+
+
+def _postprocess_generation(text: str, model_type: str) -> str:
+	"""For decoder-only models, strip the prompt up to 'Summary:' if present."""
+	if model_type == "decoder-only":
+		anchor = "Summary:"
+		idx = text.find(anchor)
+		return text[idx + len(anchor):].strip() if idx != -1 else text.strip()
+	return text.strip()
 
 
 def load_model_any(model_path: Path, base_model_name: Optional[str] = None):
@@ -208,6 +217,7 @@ def main():
 				max_new_tokens=args.max_new_tokens,
 			)
 		out_text = tokenizer.decode(gen[0], skip_special_tokens=True)
+		out_text = _postprocess_generation(out_text, model_type)
 		print(out_text)
 
 
