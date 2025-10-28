@@ -2,6 +2,7 @@ torch
 transformers
 datasets
 evaluate
+tensorboard
 rouge-score
 accelerate
 peft
@@ -12,3 +13,4 @@ safetensors
 sentencepiece
 tqdm
 numpy
+matplotlib

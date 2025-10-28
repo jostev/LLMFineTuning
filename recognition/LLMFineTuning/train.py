@@ -13,6 +13,7 @@ from dataset import get_dataloaders
 from utils import compute_rouge, move_to_device
 from tqdm.auto import tqdm
 from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokenizer
+from torch.utils.tensorboard import SummaryWriter
 
 def evaluate_loss(model, dataloader, device):
     """Evaluate model on validation dataset."""
@@ -154,6 +155,11 @@ def main():
     print("Starting training...")
     if torch.cuda.is_available():
         print(torch.cuda.mem_get_info())
+    # TensorBoard writer
+    tb_dir = (out_dir / "tb")
+    tb_dir.mkdir(parents=True, exist_ok=True)
+    writer = SummaryWriter(log_dir=tb_dir.as_posix())
+    global_step = 0
     for epoch in range(1, args.epochs + 1):
         model.train()
         optimizer.zero_grad(set_to_none=True)
@@ -166,6 +172,7 @@ def main():
             # Forward pass with mixed precision    
             with autocast(enabled=args.fp16):
                 outputs = model(**batch)
+                raw_loss = outputs.loss.detach()
                 loss = outputs.loss / args.grad_accum
 
             # Backward pass with gradient scaling   
@@ -180,6 +187,12 @@ def main():
                 scaler.update()
                 optimizer.zero_grad(set_to_none=True)
                 scheduler.step()
+            # TensorBoard logging per step
+            current_lr = scheduler.get_last_lr()[0] if hasattr(scheduler, "get_last_lr") else args.lr
+            writer.add_scalar("train/loss", float(raw_loss.item()), global_step)
+            writer.add_scalar("train/lr", float(current_lr), global_step)
+            writer.add_scalar("train/epoch", epoch, global_step)
+            global_step += 1
             
             # Update progress bar
             pbar.set_postfix({"loss": f"{running / max(1, step):.4f}"})
@@ -193,6 +206,10 @@ def main():
             num_beams=args.eval_num_beams,
             max_new_tokens=args.eval_max_new_tokens
         )
+        # TensorBoard: epoch-level validation metrics
+        writer.add_scalar("val/loss", float(val_loss), epoch)
+        for k, v in metrics.items():
+            writer.add_scalar(f"val/{k}", float(v), epoch)
 
         # Epoch logging
         print(f"Epoch {epoch}/{args.epochs}")
@@ -254,6 +271,9 @@ def main():
                 json.dump(test_metrics, f, indent=2)
             with open((out_dir / "test_metrics.json").as_posix(), "w", encoding="utf-8") as f:
                 json.dump(test_metrics, f, indent=2)
+            # TensorBoard: test metrics (logged at current epoch)
+            for k, v in (test_metrics or {}).items():
+                writer.add_scalar(f"test/{k}", float(v), epoch)
 
         # Write training summary
         total_time_sec = int(time.time() - t0)
@@ -274,6 +294,30 @@ def main():
         }
         with open((out_dir / "training_summary.json").as_posix(), "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
+        # TensorBoard: log hparams on final epoch
+        if epoch == args.epochs:
+            try:
+                hparams = {
+                    "model_name": args.model_name,
+                    "epochs": args.epochs,
+                    "batch_size": args.batch_size,
+                    "lr": args.lr,
+                    "scheduler": args.scheduler_type,
+                    "optimizer": args.optimizer_type,
+                    "max_src": args.max_source_length,
+                    "max_tgt": args.max_target_length,
+                    "fp16": bool(args.fp16),
+                    "lora_r": args.lora_r,
+                }
+                final_metrics = {f"hparam/{k}": float(v) for k, v in (metrics or {}).items()}
+                if 'test_metrics' in locals() and test_metrics:
+                    for k, v in test_metrics.items():
+                        final_metrics[f"hparam_test/{k}"] = float(v)
+                writer.add_hparams(hparams, final_metrics)
+            except Exception:
+                pass
+    # Close TensorBoard writer
+    writer.close()
 
 
 if __name__ == "__main__":
