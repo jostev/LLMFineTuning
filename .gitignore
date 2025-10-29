@@ -1,4 +1,5 @@
 .vscode/
 recognition/LLMFineTuning/__pycache__/
+recognition/LLMFineTuning/.venv/
 recognition/LLMFineTuning/runs/
 recognition/LLMFineTuning/*.sh
