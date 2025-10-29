@@ -112,7 +112,9 @@ def sample_predictions(model, tokenizer, dataloader: DataLoader, device, k: int 
 			srcs = tokenizer.batch_decode(batch["input_ids"], skip_special_tokens=True)
 
 			for s, p, r in zip(srcs, preds, refs):
-				out.append({"source": s, "prediction": p, "reference": r})
+				# If reference is empty (e.g. test split)
+				r_print = r if (r and r.strip()) else "(no reference available for this split)"
+				out.append({"source": s, "prediction": p, "reference": r_print})
 				if len(out) >= k:
 					return out
 	return out
