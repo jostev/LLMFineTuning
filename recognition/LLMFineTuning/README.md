@@ -351,6 +351,18 @@ Below are samples from a recent evaluation run. Where references are not availab
     - Reference: (not available for this split)
     - Notes: Simplifies specific device name (“tracheostomy cannula” → “breathing tube”); acceptable for lay style but less precise.
 
+4) Example
+    - Source (trunc.): “Radiological signs of COPD … bilateral apical pleural thickening … CT recommended given history.”
+    - Prediction: “The x‑ray shows signs of chronic obstructive pulmonary disease (COPD). There’s thickening at the tops of both lungs, possibly from radiation. A chest CT is recommended given the history.”
+    - Reference: (not available for this split)
+    - Notes: Preserves key conditions and the CT recommendation; appropriately expands COPD for lay readers.
+
+5) Example
+    - Source (trunc.): “Comparison with previous studies … diffuse peripheral opacities … tubes and lines positions … radiological worsening with new consolidation …”
+    - Prediction: “Compared to prior imaging, the lungs show widespread cloudiness at the edges. The breathing and feeding tubes appear in place. There’s worsening with new cloudiness in the left lower lobe.”
+    - Reference: (not available for this split)
+    - Notes: Captures overall trend and device positions; minor wording artifacts remain; could benefit from tighter phrasing.
+
 ## Discussion
 
 The encoder–decoder approach (FLAN‑T5) produced strong validation ROUGE (rougeL ≈ 0.65) with a modest compute budget, aligning with prior T5/FLAN‑T5 transfer‑learning results [Raffel et al., 2020; Chung et al., 2022]. LoRA [Hu et al., 2022] enabled efficient adaptation with reduced trainable parameters, which is useful on mid‑range GPUs. Qualitative outputs are readable and mostly faithful, though occasional oversimplification or minor wording artifacts occur. Dataset limitations (e.g., missing references for certain test splits) can mask progress if not evaluated on validation. Future work could incorporate factuality checks, style control, and domain‑specific terminology glossaries; additional metrics beyond ROUGE (e.g., BERTScore) may provide complementary signal.
