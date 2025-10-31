@@ -110,14 +110,6 @@ Can be enabled by passing `--lora_r` (and optional `--lora_alpha`, `--lora_dropo
     - `assets/rougeL.png`
     - `assets/rouge_all.png`
 
-Preview:
-
-![Training/Validation Loss](assets/loss.png)
-
-![ROUGE‑L](assets/rougeL.png)
-
-![ROUGE metrics](assets/rouge_all.png)
-
 ## File & Folder Overview
 - `runs/`: stores trained models and metrics.
     - `<project>/best`: epoch with model and metrics that produced best loss value or ROUGE (depending on `train.py` input arguments).
