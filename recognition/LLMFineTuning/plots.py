@@ -1,10 +1,12 @@
 """Plot utilities for training curves.
 
-Reads a metrics.jsonl produced by train.py and saves plots for
+Reads a metrics.jsonl produced by train.py and saves plots for:
 - training/validation loss
 - ROUGE metrics (rouge1, rouge2, rougeL, rougeLsum)
 
 Usage:
+    python plots.py --run_dir runs/<project> --out_dir runs/<project>/figures
+Examples:
     python plots.py --run_dir runs/project13 --out_dir runs/project13/figures
 """
 
@@ -42,9 +44,9 @@ def plot_loss(rows: List[Dict], out_dir: Path) -> None:
         print("No rows found in metrics.jsonl; skipping plots.")
         return
 
-    epochs = [r.get("epoch", i + 1) for i, r in enumerate(rows)]
-    train_loss = [r.get("train_avg_loss") for r in rows]
-    val_loss = [r.get("val_loss") for r in rows]
+    epochs = [int(r.get("epoch", i + 1)) for i, r in enumerate(rows)]
+    train_loss = [float(r.get("train_avg_loss", float("nan"))) for r in rows]
+    val_loss = [float(r.get("val_loss", float("nan"))) for r in rows]
 
     plt.figure(figsize=(6, 4))
     plt.plot(epochs, train_loss, label="train_avg_loss", marker="o")
@@ -62,11 +64,11 @@ def plot_rouge(rows: List[Dict], out_dir: Path) -> None:
     """Save ROUGE plots: rougeL, and combined rouge1/rouge2/rougeLsum."""
     if not rows:
         return
-    epochs = [r.get("epoch", i + 1) for i, r in enumerate(rows)]
-    rougeL = [r.get("rougeL") for r in rows]
-    rouge1 = [r.get("rouge1") for r in rows]
-    rouge2 = [r.get("rouge2") for r in rows]
-    rougeLsum = [r.get("rougeLsum") for r in rows]
+    epochs = [int(r.get("epoch", i + 1)) for i, r in enumerate(rows)]
+    rougeL = [float(r.get("rougeL", float("nan"))) for r in rows]
+    rouge1 = [float(r.get("rouge1", float("nan"))) for r in rows]
+    rouge2 = [float(r.get("rouge2", float("nan"))) for r in rows]
+    rougeLsum = [float(r.get("rougeLsum", float("nan"))) for r in rows]
 
     if any(v is not None for v in rougeL):
         plt.figure(figsize=(6, 4))
@@ -96,8 +98,9 @@ def plot_rouge(rows: List[Dict], out_dir: Path) -> None:
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--run_dir", type=str, required=True, help="Directory containing metrics.jsonl")
+    ap = argparse.ArgumentParser(
+        description="Generate training curves (loss and ROUGE) from a run directory.")
+    ap.add_argument("--run_dir", type=str, required=True, help="Run directory containing metrics.jsonl")
     ap.add_argument("--out_dir", type=str, default=None, help="Directory to save figures (default: <run_dir>/figures)")
     args = ap.parse_args()
 

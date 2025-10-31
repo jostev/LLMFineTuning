@@ -6,6 +6,8 @@ Contains:
 - move_to_device: move a batch dict to device
 - count_parameters: total and trainable parameter counts
 - format_input_text: format raw source text for model type
+
+Usage: imported by train.py (training loop) and predict.py (evaluation/generation).
 """
 
 from typing import Dict, List, Tuple

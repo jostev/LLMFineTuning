@@ -1,25 +1,39 @@
 """Prediction and evaluation script for fine-tuned LLMs.
 
-Supports:
-- Loading a full fine-tuned model directory (e.g., runs/.../best or runs/.../epochN)
-- Loading a LoRA adapter on top of a base model (if adapter_config.json present)
-- Running generation on a chosen split (default: test)
-- Computing ROUGE metrics
-- Saving a few qualitative examples for error analysis
+Usage:
+	python predict.py --model_path <path-or-id> \
+		[--base_model_name <base>] [--mode eval|generate] [--split train|validation|test] \
+		[--batch_size 8] [--num_beams 4] [--max_new_tokens 128] \
+		[--samples 5] [--metrics_out <file.json>] [--samples_out <file.jsonl>]
 
-Example usages:
-  python predict.py \
-	--model_path runs/project13/best \
-	--split test \
-	--num_beams 4 \
-	--max_new_tokens 128 \
-	--samples_out runs/project13/pred_samples.jsonl
+Examples:
+	# Evaluate a full checkpoint on validation (recommended for ROUGE)
+	python predict.py \
+		--model_path runs/project13/best \
+		--split validation \
+		--num_beams 4 \
+		--max_new_tokens 128 \
+		--samples 5 \
+		--metrics_out runs/project13/val_metrics.json \
+		--samples_out runs/project13/pred_samples.jsonl
 
-  # If the checkpoint is a LoRA adapter directory:
-  python predict.py \
-	--model_path runs/p13_flan_t5b_lora8_rouge/epoch3 \
-	--base_model_name google/flan-t5-base \
-	--split test
+	# Evaluate a LoRA adapter directory (requires base model name)
+	python predict.py \
+		--model_path runs/p13_flan_t5b_lora8_rouge/epoch3 \
+		--base_model_name google/flan-t5-base \
+		--split validation
+
+	# Generate from a single input (reads stdin if --input_text omitted)
+	echo "Marked cardiomegaly. NG tube in the abdomen." | \
+		python predict.py --model_path runs/project13/best --mode generate --max_new_tokens 64
+
+Outputs:
+- Prints a JSON block with: model_path, split, model_type, rouge metrics, and parameter counts.
+- Optionally writes --metrics_out (JSON) and --samples_out (JSONL with k examples).
+
+Notes:
+- Some test splits may lack references; ROUGE can be 0.0. Prefer --split validation for reporting.
+- For LoRA adapter directories (contain adapter_config.json), pass --base_model_name for the base model.
 """
 
 import argparse
@@ -121,20 +135,29 @@ def sample_predictions(model, tokenizer, dataloader: DataLoader, device, k: int 
 
 
 def main():
-	parser = argparse.ArgumentParser(description="Evaluate a fine-tuned model and run predictions.")
-	parser.add_argument("--model_path", type=str, required=True, help="Path to model dir (or HF id). If LoRA adapter, pass directory containing adapter_config.json")
-	parser.add_argument("--base_model_name", type=str, default=None, help="Base model name if loading a LoRA adapter (e.g., google/flan-t5-base)")
-	parser.add_argument("--mode", type=str, default="eval", choices=["eval", "generate"], help="Run dataset evaluation or single-text generation")
-	parser.add_argument("--split", type=str, default="test", choices=["train", "validation", "test"], help="Dataset split for eval mode")
+	parser = argparse.ArgumentParser(
+		description="Evaluate a fine-tuned model (ROUGE + samples) or generate from a single input.",
+		epilog=(
+			"Examples:\n"
+			"  python predict.py --model_path runs/project13/best --split validation --metrics_out runs/project13/val_metrics.json\n"
+			"  python predict.py --model_path runs/p13_flan_t5b_lora8_rouge/epoch3 --base_model_name google/flan-t5-base --split validation\n"
+			"  echo 'text' | python predict.py --model_path runs/project13/best --mode generate\n"
+		),
+		formatter_class=argparse.RawDescriptionHelpFormatter,
+	)
+	parser.add_argument("--model_path", type=str, required=True, help="Path to model dir (e.g., runs/.../best) or HF hub id. If pointing to a LoRA adapter dir, include adapter_config.json.")
+	parser.add_argument("--base_model_name", type=str, default=None, help="Base model to load under LoRA adapter (e.g., google/flan-t5-base)")
+	parser.add_argument("--mode", type=str, default="eval", choices=["eval", "generate"], help="'eval': compute ROUGE and sample predictions; 'generate': summarize a single input")
+	parser.add_argument("--split", type=str, default="test", choices=["train", "validation", "test"], help="Dataset split for eval mode (validation recommended if test lacks references)")
 	parser.add_argument("--batch_size", type=int, default=8)
 	parser.add_argument("--max_source_length", type=int, default=512)
 	parser.add_argument("--max_target_length", type=int, default=256)
 	parser.add_argument("--num_beams", type=int, default=4)
 	parser.add_argument("--max_new_tokens", type=int, default=128)
-	parser.add_argument("--input_text", type=str, default=None, help="Raw expert radiology report for generate mode; falls back to stdin if not provided")
-	parser.add_argument("--samples", type=int, default=5, help="Number of qualitative samples to save/print")
-	parser.add_argument("--samples_out", type=str, default=None, help="Optional path to save samples JSONL")
-	parser.add_argument("--metrics_out", type=str, default=None, help="Optional path to save metrics JSON")
+	parser.add_argument("--input_text", type=str, default=None, help="Raw expert radiology report for generate mode; reads stdin if omitted")
+	parser.add_argument("--samples", type=int, default=5, help="Number of qualitative samples to save/print in eval mode")
+	parser.add_argument("--samples_out", type=str, default=None, help="Path to save samples JSONL (one JSON per line)")
+	parser.add_argument("--metrics_out", type=str, default=None, help="Path to save metrics JSON")
 	args = parser.parse_args()
 
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -184,6 +207,10 @@ def main():
 		}
 
 		print(json.dumps(result, indent=2))
+
+		# Hint if references might be missing
+		if all(v == 0.0 for v in scores.values()):
+			print("\nNote: ROUGE scores are all 0.0 — this split may not include reference summaries. Try --split validation.")
 
 		# Save metrics if requested
 		if args.metrics_out:

@@ -1,4 +1,22 @@
-"""Training script for LLM fine-tuning."""
+"""Training script for LLM fine-tuning.
+
+Usage:
+    python train.py \
+        --model_name google/flan-t5-base \
+        --output_dir runs/<project> \
+        --epochs 3 --batch_size 8 \
+        --max_source_length 512 --max_target_length 256 \
+        [--fp16] [--lora_r 8] [--scheduler_type linear|cosine] [--optimizer_type adamw]
+
+Outputs:
+- Checkpoints under runs/<project>/(epochK|best) with metrics.json per epoch.
+- Streaming metrics in runs/<project>/metrics.jsonl and TensorBoard logs in runs/<project>/tb.
+- Training summary in runs/<project>/training_summary.json.
+
+Notes:
+- Use a unique --output_dir per run to avoid appending to previous metrics.
+- If the dataset test split lacks references, use validation for model selection and reporting.
+"""
 import argparse
 import os
 from pathlib import Path
@@ -8,14 +26,24 @@ from torch.utils.data import DataLoader
 from torch.cuda.amp import autocast, GradScaler
 import numpy as np
 import json
-from modules import *
+from modules import (
+    load_model_and_tokenizer,
+    prepare_model_for_training,
+    create_optimizer,
+    create_scheduler,
+    set_seed,
+)
 from dataset import get_dataloaders
 from utils import compute_rouge, move_to_device
 from tqdm.auto import tqdm
-from transformers import AutoModelForSeq2SeqLM, AutoModelForCausalLM, AutoTokenizer
+from transformers import (
+    AutoModelForSeq2SeqLM,
+    AutoModelForCausalLM,
+    AutoTokenizer,
+)
 from torch.utils.tensorboard import SummaryWriter
 
-def evaluate_loss(model, dataloader, device):
+def evaluate_loss(model, dataloader, device: torch.device):
     """Evaluate model on validation dataset."""
     model.eval()
     total_loss = 0.0
@@ -100,8 +128,11 @@ def main():
         freeze_embeddings=args.freeze_embeddings,
         lora_config=lora_config
     )
-
-    model.config.use_cache = False  # Disable cache for training
+    # Disable cache for training (helps with memory during training)
+    try:
+        model.config.use_cache = False  # type: ignore[attr-defined, assignment]
+    except Exception:
+        pass
 
     # Build dataloaders
     train_loader, val_loader, test_loader = get_dataloaders(
@@ -219,8 +250,9 @@ def main():
         # Save per-epoch model
         ckpt_dir = out_dir / f"epoch{epoch}"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
-        model.save_pretrained(ckpt_dir.as_posix())
-        tokenizer.save_pretrained(ckpt_dir.as_posix())
+        # Save per-epoch checkpoint
+        model.save_pretrained(ckpt_dir.as_posix())  # type: ignore[attr-defined]
+        tokenizer.save_pretrained(ckpt_dir.as_posix())  # type: ignore[attr-defined]
 
         row = {
             "epoch": epoch,
@@ -247,8 +279,8 @@ def main():
             for f in best_dir.iterdir():
                 if f.is_file():
                     f.unlink()
-            model.save_pretrained(best_dir.as_posix())
-            tokenizer.save_pretrained(best_dir.as_posix())
+            model.save_pretrained(best_dir.as_posix())  # type: ignore[attr-defined]
+            tokenizer.save_pretrained(best_dir.as_posix())  # type: ignore[attr-defined]
             with open((best_dir / "metrics.json").as_posix(), "w", encoding="utf-8") as f:
                 json.dump(row, f, indent=2)
 
@@ -262,7 +294,7 @@ def main():
             else:
                 best_model = AutoModelForCausalLM.from_pretrained(best_model_path)
             best_tok = AutoTokenizer.from_pretrained(best_model_path)
-            best_model.to(device)
+            best_model.to(device)  # type: ignore[call-arg]
             test_metrics = compute_rouge(
                 best_model, best_tok, test_loader, device, args.fp16,
                 num_beams=args.eval_num_beams, max_new_tokens=args.eval_max_new_tokens

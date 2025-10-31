@@ -2,27 +2,31 @@
 Dataset loader for BioLaySumm (Biomedical Lay Summarization) dataset.
 This module provides utilities to load and preprocess radiology reports
 for fine-tuning LLMs to translate expert reports into layperson summaries.
+
+Usage (typical):
+    from dataset import get_dataloaders
+    train_loader, val_loader, test_loader = get_dataloaders(tokenizer, batch_size=8)
 """
 
 import torch
 from torch.utils.data import Dataset
-from transformers import PreTrainedTokenizer
+from transformers import PreTrainedTokenizerBase
 from datasets import load_dataset
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any, cast
 
 # BioLaySumm dataset path for ACL 2025 BioLaySumm workshop Subtask 2.1
 DATASET_PATH = "BioLaySumm/BioLaySumm2025-LaymanRRG-opensource-track"
 
 
-def load_biolaysumm_data(split: str) -> Dataset:
+def load_biolaysumm_data(split: str) -> Any:
     """
     Load BioLaySumm dataset split.
     
     Args:
-        split: Dataset split to load ('train', 'validation', or 'test')
+    split: Dataset split to load ("train", "validation", or "test")
     
     Returns:
-        Hugging Face dataset object
+    Hugging Face dataset object
     """
     return load_dataset(DATASET_PATH, split=split)
 
@@ -36,7 +40,7 @@ class BioLaySummDataset(Dataset):
     def __init__(
         self,
         dataset,
-        tokenizer: PreTrainedTokenizer,
+        tokenizer: PreTrainedTokenizerBase,
         max_source_length: int = 512,
         max_target_length: int = 256,
         model_type: str = "encoder-decoder",
@@ -119,6 +123,8 @@ class BioLaySummDataset(Dataset):
             truncation=True,
             return_tensors="pt"
         )
+        source_input_ids = cast(torch.Tensor, source_encoding["input_ids"]).squeeze(0)
+        source_attention = cast(torch.Tensor, source_encoding["attention_mask"]).squeeze(0)
         
         # Tokenize target
         target_encoding = self.tokenizer(
@@ -128,14 +134,14 @@ class BioLaySummDataset(Dataset):
             truncation=True,
             return_tensors="pt"
         )
-        
+        target_input_ids = cast(torch.Tensor, target_encoding["input_ids"]).squeeze(0)
         # Replace padding token ids with -100 for loss calculation
-        labels = target_encoding["input_ids"].clone()
+        labels = target_input_ids.clone()
         labels[labels == self.tokenizer.pad_token_id] = -100
         
         return {
-            "input_ids": source_encoding["input_ids"].squeeze(),
-            "attention_mask": source_encoding["attention_mask"].squeeze(),
+            "input_ids": source_input_ids,
+            "attention_mask": source_attention,
             "labels": labels.squeeze()
         }
     
@@ -164,23 +170,21 @@ class BioLaySummDataset(Dataset):
             truncation=True,
             return_tensors="pt"
         )
-        
-        # For causal language modeling, input_ids and labels are the same
-        # but we need to mask the source part in labels
-        input_ids = encoding["input_ids"].squeeze()
-        attention_mask = encoding["attention_mask"].squeeze()
+        input_ids = cast(torch.Tensor, encoding["input_ids"]).squeeze(0)
+        attention_mask = cast(torch.Tensor, encoding["attention_mask"]).squeeze(0)
         
         # Create labels: -100 for source tokens, actual token ids for summary
         labels = input_ids.clone()
         
         # Find where "Summary:" starts to only compute loss on summary tokens
         source_prompt = f"Source: {source}\n\nSummary: "
-        source_tokens = self.tokenizer(
+        source_tokens_enc = self.tokenizer(
             source_prompt,
             max_length=self.max_source_length,
             truncation=True,
             return_tensors="pt"
-        )["input_ids"].squeeze()
+        )
+        source_tokens = cast(torch.Tensor, source_tokens_enc["input_ids"]).squeeze(0)
         
         # Mask source tokens in labels
         source_length = len(source_tokens)
@@ -196,7 +200,7 @@ class BioLaySummDataset(Dataset):
         }
 
 def get_dataloaders(
-    tokenizer: PreTrainedTokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     batch_size: int = 8,
     max_source_length: int = 512,
     max_target_length: int = 256,

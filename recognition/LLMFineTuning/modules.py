@@ -15,7 +15,8 @@ from transformers import (
     get_linear_schedule_with_warmup,
     get_cosine_schedule_with_warmup
 )
-from typing import Dict, Optional, Tuple
+from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from typing import Dict, Optional, Tuple, Union, Any, cast, TYPE_CHECKING
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -83,10 +84,10 @@ def get_model_type(model_name: str) -> str:
 
 def load_model_and_tokenizer(
     model_name: str,
-    device: str = "cuda" if torch.cuda.is_available() else "cpu",
+    device: Union[str, torch.device] = "cuda" if torch.cuda.is_available() else "cpu",
     use_8bit: bool = False,
     gradient_checkpointing: bool = False
-) -> Tuple[torch.nn.Module, AutoTokenizer, str]:
+) -> Tuple[PreTrainedModel, PreTrainedTokenizerBase, str]:
     """
     Load a pre-trained model and tokenizer.
     
@@ -109,7 +110,7 @@ def load_model_and_tokenizer(
     logger.info(f"Model type: {model_type}")
     
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(model_path)
     
     # Configure model loading arguments
     model_kwargs = {}
@@ -124,14 +125,23 @@ def load_model_and_tokenizer(
     
     # Load model based on type
     if model_type == "encoder-decoder":
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_path, **model_kwargs)
+        model: PreTrainedModel = AutoModelForSeq2SeqLM.from_pretrained(model_path, **model_kwargs)
     else:  # decoder-only
         model = AutoModelForCausalLM.from_pretrained(model_path, **model_kwargs)
         
         # Set pad token for decoder-only models
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
-            model.config.pad_token_id = tokenizer.eos_token_id
+            eos_id = getattr(tokenizer, "eos_token_id", None)
+            if isinstance(eos_id, int):
+                model.config.pad_token_id = eos_id  # type: ignore[assignment]
+            else:
+                try:
+                    tok = getattr(tokenizer, "eos_token", None)
+                    if tok is not None:
+                        model.config.pad_token_id = int(tokenizer.convert_tokens_to_ids(tok))  # type: ignore[arg-type, assignment]
+                except Exception:
+                    pass
             logger.info(f"Set pad_token to eos_token: {tokenizer.pad_token}")
     
     # Enable gradient checkpointing if requested
@@ -141,7 +151,20 @@ def load_model_and_tokenizer(
     
     # Move model to device if not using 8-bit (8-bit handles device placement)
     if not use_8bit:
-        model = model.to(device)
+        # Move model to device without reassigning to avoid type checker confusion
+        try:
+            if isinstance(device, str):
+                if device.startswith("cuda") and torch.cuda.is_available():
+                    _ = model.cuda()  # type: ignore[misc, call-arg]
+                else:
+                    _ = model.cpu()  # type: ignore[misc, call-arg]
+            else:
+                if device.type == "cuda" and torch.cuda.is_available():
+                    _ = model.cuda()  # type: ignore[misc, call-arg]
+                else:
+                    _ = model.cpu()  # type: ignore[misc, call-arg]
+        except Exception:
+            pass
     
     logger.info(f"Model loaded successfully")
     logger.info(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
@@ -175,9 +198,9 @@ def prepare_model_for_training(
             logger.warning("LoRA requested but PEFT is not installed; skipping LoRA configuration.")
         else:
             # Determine task type based on model attributes
-            task_type = TaskType.SEQ_2_SEQ_LM if hasattr(model, "encoder") else TaskType.CAUSAL_LM
+            task_type = cast(Any, TaskType).SEQ_2_SEQ_LM if hasattr(model, "encoder") else cast(Any, TaskType).CAUSAL_LM  # type: ignore[attr-defined]
 
-            peft_config = LoraConfig(
+            peft_config = cast(Any, LoraConfig)(  # type: ignore[operator]
                 task_type=task_type,
                 inference_mode=False,
                 r=lora_config.get("r", 8),
@@ -186,27 +209,30 @@ def prepare_model_for_training(
                 target_modules=lora_config.get("target_modules", ["q", "v"])
             )
 
-            model = get_peft_model(model, peft_config)
+            model = cast(Any, get_peft_model)(model, peft_config)  # type: ignore[call-arg]
             logger.info("LoRA adaptation enabled")
             with torch.no_grad():
-                model.print_trainable_parameters()
+                model.print_trainable_parameters()  # type: ignore[attr-defined]
             return model
 
     # Freeze encoder layers when requested (for encoder-decoder models)
     if freeze_encoder and hasattr(model, "encoder"):
-        for param in model.encoder.parameters():
+        enc = cast(torch.nn.Module, getattr(model, "encoder"))
+        for param in enc.parameters():
             param.requires_grad = False
         logger.info("Encoder layers frozen")
 
     # Freeze embedding layers when requested
     if freeze_embeddings:
         if hasattr(model, "shared"):  # T5/FLAN-T5 share embeddings
-            for param in model.shared.parameters():
+            shared = cast(torch.nn.Module, getattr(model, "shared"))
+            for param in shared.parameters():
                 param.requires_grad = False
-        if hasattr(model, "transformer") and hasattr(model.transformer, "wte"):
-            for param in model.transformer.wte.parameters():
+        if hasattr(model, "transformer") and hasattr(getattr(model, "transformer"), "wte"):
+            transformer = cast(Any, getattr(model, "transformer"))
+            for param in transformer.wte.parameters():  # type: ignore[attr-defined]
                 param.requires_grad = False
-            for param in model.transformer.wpe.parameters():
+            for param in transformer.wpe.parameters():  # type: ignore[attr-defined]
                 param.requires_grad = False
         logger.info("Embedding layers frozen")
 
@@ -287,10 +313,10 @@ def create_optimizer(
 def create_scheduler(
     optimizer: torch.optim.Optimizer,
     num_training_steps: int,
-    num_warmup_steps: int = None,
+    num_warmup_steps: Optional[int] = None,
     warmup_ratio: float = 0.1,
     scheduler_type: str = "linear"
-) -> torch.optim.lr_scheduler._LRScheduler:
+) -> Union[torch.optim.lr_scheduler._LRScheduler, torch.optim.lr_scheduler.LambdaLR]:
     """
     Create learning rate scheduler.
     
